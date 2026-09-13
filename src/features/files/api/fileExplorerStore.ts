@@ -1561,7 +1561,14 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     await get().refreshGitChanges();
     const openFiles = get().openFiles.filter((file) => !isSameOrChildPath(file.path, path));
     const activeFile = openFiles.find((file) => file.path === get().activeFilePath) ?? null;
-    set({ openFiles, activeFilePath: activeFile?.path ?? null, activeFile });
+    const renamedPath = parentPath(path) ? `${parentPath(path)}/${newName}` : newName;
+    const ignoreCase = isFileExplorerIgnoreCaseInsensitive(project.path);
+    const selectedEntries = get().selectedEntries.map((entry) => {
+      if (!filePathContains(path, entry.path, ignoreCase)) return entry;
+      const nextPath = `${renamedPath}${entry.path.slice(path.length)}`;
+      return { ...entry, path: nextPath, name: basename(nextPath) };
+    });
+    set({ openFiles, activeFilePath: activeFile?.path ?? null, activeFile, selectedEntries });
     if (get().searchQuery.trim()) await get().setSearchQuery(get().searchQuery);
   },
 

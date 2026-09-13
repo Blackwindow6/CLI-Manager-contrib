@@ -16,6 +16,10 @@ use crate::file_watcher::FileWatcherBridge;
 use crate::shell_resolver::silent_command;
 use crate::text_encoding::{decode_text, encode_text};
 
+#[path = "commands/path_guards.rs"]
+mod path_guards;
+use path_guards::{move_paths_ignore_case, path_components_equal, path_starts_with_components};
+
 const TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES: u64 = 5 * 1024 * 1024;
 const IMAGE_MAX_PIXELS: u64 = 12_000_000;
@@ -1268,10 +1272,12 @@ fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Resu
     if source == root {
         return Err("cannot_move_root".into());
     }
-    if source != target && source.starts_with(target) {
+    let ignore_case = move_paths_ignore_case(root);
+    let same_path = path_components_equal(source, target, ignore_case);
+    if !same_path && path_starts_with_components(source, target, ignore_case) {
         return Err("target_contains_source".into());
     }
-    if source.is_dir() && target.starts_with(source) {
+    if !same_path && source.is_dir() && path_starts_with_components(target, source, ignore_case) {
         return Err("target_inside_source".into());
     }
     ensure_distinct_source_target(source, target)?;

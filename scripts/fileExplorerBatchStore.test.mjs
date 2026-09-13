@@ -178,6 +178,32 @@ test("buffers edited during awaited mutation are retained, not discarded", async
   assert.equal(h.store.getState().openFiles[0].content, "edited");
 });
 
+test("successful rename migrates selected paths and names", async () => {
+  const h = harness();
+  const selected = entry("src/old.txt");
+  h.store.getState().selectEntry(selected);
+  await h.store.getState().renameEntry(selected.path, "new.txt", false);
+  const [renamed] = h.store.getState().selectedEntries;
+  assert.equal(renamed.path, "src/new.txt");
+  assert.equal(renamed.name, "new.txt");
+  assert.equal(renamed.kind, "file");
+  const renameCall = h.calls.find((call) => call.command === "file_rename");
+  assert.equal(renameCall?.args.rootPath, "E:\\one");
+  assert.equal(renameCall?.args.relativePath, "src/old.txt");
+  assert.equal(renameCall?.args.newName, "new.txt");
+  assert.equal(renameCall?.args.overwrite, false);
+});
+
+test("failed rename preserves the selected path", async () => {
+  const h = harness(async (command) => {
+    if (command === "file_rename") throw new Error("target_exists");
+  });
+  const selected = entry("src/old.txt");
+  h.store.getState().selectEntry(selected);
+  await assert.rejects(h.store.getState().renameEntry(selected.path, "new.txt", false), /target_exists/);
+  assert.deepEqual(h.store.getState().selectedEntries, [selected]);
+});
+
 test("search view changes clear selection; refresh of the same query does not", async () => {
   const h = harness();
   h.store.getState().selectEntry(entry("a"));
