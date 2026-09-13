@@ -1658,3 +1658,24 @@ V1.4.0：虚拟化变更树、Worker 建树及刷新合并；64887 文件浏览�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 118: 修复 PR #259 文件浏览器审查问题
+
+**Date**: 2026-09-13
+**Task**: 修复 PR #259 文件浏览器审查问题
+**Branch**: `fix/pr-259-review-findings`
+
+### Summary
+
+修复重命名后文件选择状态保留旧路径，以及 Windows 大小写变体移动祖先保护绕过；补充前后端回归测试，更新 V1.4.0 文档并完成类型、构建、架构与 Rust 全量测试验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `160bb416` | (see git log) |
+
+### Status
+
+[OK] **Completed**
