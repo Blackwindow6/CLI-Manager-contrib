@@ -1,5 +1,9 @@
+use super::path_guards::{
+    move_paths_ignore_case, path_components_equal, path_starts_with_components,
+};
 use super::*;
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 #[test]
@@ -65,4 +69,127 @@ fn copy_rejects_nested_symlink_sources() {
 
     let err = copy_path(&root, &root.join("src"), &root.join("dst")).unwrap_err();
     assert_eq!(err, "path_is_symlink");
+}
+
+#[test]
+fn mutation_source_preserves_plain_paths_and_rejects_escape() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    fs::write(root.join("nested/file.txt"), b"keep").unwrap();
+    assert_eq!(resolve_mutation_source(&root, "").unwrap(), root);
+    assert_eq!(
+        resolve_mutation_source(&root, "nested/file.txt").unwrap(),
+        root.join("nested/file.txt")
+    );
+    assert!(resolve_mutation_source(&root, "../outside").is_err());
+}
+
+#[test]
+fn mutation_source_rejects_link_and_link_ancestor_without_touching_target() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    fs::create_dir(root.join("real")).unwrap();
+    fs::write(root.join("real/keep.txt"), b"keep").unwrap();
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(root.join("real"), root.join("link"));
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(root.join("real"), root.join("link"));
+    if linked.is_err() {
+        eprintln!("symlink test unavailable: OS denied link creation");
+        return;
+    }
+    assert_eq!(
+        resolve_mutation_source(&root, "link").unwrap_err(),
+        "path_is_symlink"
+    );
+    assert_eq!(
+        resolve_mutation_source(&root, "link/keep.txt").unwrap_err(),
+        "path_is_symlink"
+    );
+    assert_eq!(fs::read(root.join("real/keep.txt")).unwrap(), b"keep");
+}
+
+#[test]
+fn move_rejects_ancestor_target_without_removing_source() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    let source = root.join("nested/keep.txt");
+    fs::write(&source, b"keep").unwrap();
+    assert_eq!(
+        move_path(&root, &source, &root.join("nested"), true).unwrap_err(),
+        "target_contains_source"
+    );
+    assert_eq!(fs::read(&source).unwrap(), b"keep");
+}
+
+#[test]
+fn move_path_comparison_respects_case_and_component_boundaries() {
+    let source = Path::new("root/nested/keep.txt");
+    let case_variant_parent = Path::new("root/NESTED");
+    let similarly_prefixed_parent = Path::new("root/nested-other");
+
+    assert!(path_starts_with_components(
+        source,
+        case_variant_parent,
+        true
+    ));
+    assert!(!path_starts_with_components(
+        source,
+        case_variant_parent,
+        false
+    ));
+    assert!(!path_starts_with_components(
+        source,
+        similarly_prefixed_parent,
+        true
+    ));
+    assert!(path_components_equal(
+        Path::new("root/nested"),
+        case_variant_parent,
+        true
+    ));
+    assert!(!path_components_equal(
+        Path::new("root/nested"),
+        case_variant_parent,
+        false
+    ));
+}
+
+#[test]
+#[cfg(windows)]
+fn move_rejects_case_variant_ancestor_target_without_removing_source() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    let source = root.join("nested/keep.txt");
+    fs::write(&source, b"keep").unwrap();
+    let case_variant_target = root.join("NESTED");
+
+    assert_eq!(
+        move_path(&root, &source, &case_variant_target, true).unwrap_err(),
+        "target_contains_source"
+    );
+    assert!(source.exists());
+    assert!(case_variant_target.is_dir());
+    assert_eq!(fs::read(&source).unwrap(), b"keep");
+}
+
+#[test]
+#[cfg(windows)]
+fn wsl_unc_paths_keep_case_sensitive_move_comparison() {
+    assert!(!move_paths_ignore_case(Path::new(
+        r"\\wsl.localhost\Ubuntu\home\repo"
+    )));
+    assert!(!move_paths_ignore_case(Path::new(
+        r"\\wsl$\Ubuntu\home\repo"
+    )));
+    assert!(!move_paths_ignore_case(Path::new(
+        r"\\?\UNC\wsl.localhost\Ubuntu\home\repo"
+    )));
+    assert!(!move_paths_ignore_case(Path::new(
+        r"\\?\UNC\wsl$\Ubuntu\home\repo"
+    )));
+    assert!(move_paths_ignore_case(Path::new(r"C:\repo")));
 }

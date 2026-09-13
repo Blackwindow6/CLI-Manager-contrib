@@ -16,6 +16,10 @@ use crate::file_watcher::FileWatcherBridge;
 use crate::shell_resolver::silent_command;
 use crate::text_encoding::{decode_text, encode_text};
 
+#[path = "commands/path_guards.rs"]
+mod path_guards;
+use path_guards::{move_paths_ignore_case, path_components_equal, path_starts_with_components};
+
 const TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES: u64 = 5 * 1024 * 1024;
 const IMAGE_MAX_PIXELS: u64 = 12_000_000;
@@ -808,7 +812,7 @@ pub async fn file_rename(
 pub async fn file_delete(root_path: String, relative_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
-        let target = resolve_existing_path(&root, &relative_path)?;
+        let target = resolve_mutation_source(&root, &relative_path)?;
         if target == root {
             return Err("cannot_delete_root".into());
         }
@@ -885,7 +889,7 @@ pub async fn file_move(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
-        let source = resolve_existing_path(&root, &source_path)?;
+        let source = resolve_mutation_source(&root, &source_path)?;
         let target = resolve_named_target(&root, &target_parent_path, &name)?;
         move_path(&root, &source, &target, overwrite)
     })
@@ -951,6 +955,22 @@ fn resolve_existing_path(root: &Path, relative_path: &str) -> Result<PathBuf, St
         .map_err(|err| format!("path_canonicalize_failed: {err}"))?;
     ensure_existing_child_within_root(root, &canonical)?;
     Ok(canonical)
+}
+
+/// Destructive operations must not canonicalize a link into its target and then
+/// delete/move that target. Check every source component before resolution.
+fn resolve_mutation_source(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    validate_relative_path(relative_path).map_err(|err| err.to_string())?;
+    let mut candidate = root.to_path_buf();
+    for component in Path::new(relative_path).components() {
+        candidate.push(component);
+        let metadata =
+            fs::symlink_metadata(&candidate).map_err(|err| format!("metadata_failed: {err}"))?;
+        if is_symlink_or_reparse(&metadata) {
+            return Err("path_is_symlink".into());
+        }
+    }
+    resolve_existing_path(root, relative_path)
 }
 
 // 校验非空目标相对路径，并要求其现有父目录位于根内。
@@ -1252,7 +1272,12 @@ fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Resu
     if source == root {
         return Err("cannot_move_root".into());
     }
-    if source.is_dir() && target.starts_with(source) {
+    let ignore_case = move_paths_ignore_case(root);
+    let same_path = path_components_equal(source, target, ignore_case);
+    if !same_path && path_starts_with_components(source, target, ignore_case) {
+        return Err("target_contains_source".into());
+    }
+    if !same_path && source.is_dir() && path_starts_with_components(target, source, ignore_case) {
         return Err("target_inside_source".into());
     }
     ensure_distinct_source_target(source, target)?;
